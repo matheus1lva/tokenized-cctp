@@ -1,47 +1,47 @@
-# Hub em USD na Ethereum com teto de TESOURO na Base
+# USD hub on Ethereum with a TESOURO ceiling on Base
 
-Este documento descreve a branch `feat/usd-hub-tesouro-ceiling`. A ideia é um vault Yearn V3 na Ethereum que recebe **USDC**, parecido com o yvUSD, e distribui o dinheiro entre sleeves:
+This document describes the `feat/usd-hub-tesouro-ceiling` branch. The idea is a Yearn V3 vault on Ethereum that takes **USDC**, similar to yvUSD, and splits funds across sleeves:
 
-- **TESOURO na Base**, via CCTP, com teto fixo em dólar;
-- **SPYon e QQQon (Ondo)** na própria Ethereum;
-- **um PT da Pendle** segurado até o vencimento;
-- **um núcleo líquido em USD** (uma strategy Yearn que já existe, como sUSDS ou Morpho OG).
+- **TESOURO on Base**, via CCTP, with a fixed USD ceiling;
+- **SPYon and QQQon (Ondo)** on Ethereum itself;
+- **a Pendle PT** held to maturity;
+- **a liquid USD core** (an existing Yearn strategy, such as sUSDS or Morpho OG).
 
-Nada foi deployado. Os scripts só foram simulados (`forge script` sem `--broadcast`).
+Nothing has been deployed. The scripts were only simulated (`forge script` without `--broadcast`).
 
-## Arquitetura
+## Architecture
 
 ```mermaid
 flowchart LR
-    U[Depositante USDC] --> V[Vault Yearn V3<br/>Ethereum, USDC]
-    V -->|~35%| C[Núcleo líquido<br/>strategy Yearn existente]
+    U[Depositor USDC] --> V[Yearn V3 Vault<br/>Ethereum, USDC]
+    V -->|~35%| C[Liquid core<br/>existing Yearn strategy]
     V -->|~15%| S[OraclePricedHoldStrategy<br/>SPYon + Chainlink]
     V -->|~10%| Q[OraclePricedHoldStrategy<br/>QQQon + Chainlink]
-    V -->|~20%| P[PendlePTHoldStrategy<br/>PT até o vencimento]
-    V -->|~15%, máx. teto| H[OracleCCTPStrategy<br/>hub]
-    V -.->|opcional 5%| B[OraclePricedHoldStrategy<br/>cbBTC]
-    H <-->|CCTP USDC + mensagens| R[TesouroRemoteStrategy<br/>Base]
+    V -->|~20%| P[PendlePTHoldStrategy<br/>PT held to maturity]
+    V -->|~15%, max ceiling| H[OracleCCTPStrategy<br/>hub]
+    V -.->|optional 5%| B[OraclePricedHoldStrategy<br/>cbBTC]
+    H <-->|CCTP USDC + messages| R[TesouroRemoteStrategy<br/>Base]
     R -->|router adapter TODO| T[(TESOURO)]
-    R -.->|preço| O1[RedStone TESOURO/USD]
-    R -.->|stop de câmbio| O2[Chainlink BRL/USD]
+    R -.->|price| O1[RedStone TESOURO/USD]
+    R -.->|FX stop| O2[Chainlink BRL/USD]
 ```
 
-| Contrato | Rede | O que faz |
+| Contract | Network | What it does |
 |---|---|---|
-| `src/origin/OracleCCTPStrategy.sol` | Ethereum | Estende `CCTPStrategy`. Aceita o report estendido, rejeita report velho, compara o preço com um oracle no hub (opcional), manda pedido de saque pra Base, loss limit padrão de 3%, teto de exposição no hub (`maxRemoteExposure`). |
-| `src/remote/BaseOracleRemoteStrategy.sol` | Base | Base para sleeves remotas com ativo precificado (não ERC-4626). Troca USDC pelo ativo num router, valoriza pelo oracle, manda o report estendido, recebe pedidos de saque do hub. |
-| `src/remote/TesouroRemoteStrategy.sol` | Base | TESOURO com teto em dólar (`maxUsdExposure`, padrão 75.000 USDC) e stop de câmbio BRL/USD. |
-| `src/remote/TesouroRemoteStrategyFactory.sol` | Base | Deploy por CREATE3, no mesmo padrão do `RemoteStrategyFactory`, só que restrito à governance. |
-| `src/local/OraclePricedHoldStrategy.sol` | Ethereum | Compra e segura um token (SPYon, QQQon, cbBTC) com USDC e valoriza pelo feed, com checagem de preço velho. |
-| `src/local/PendlePTHoldStrategy.sol` | Ethereum | Compra um PT com USDC e segura até o vencimento, usando o `PendleSwapper` do periphery da Yearn e o oracle PY da Pendle. Sem loop e sem empréstimo. |
+| `src/origin/OracleCCTPStrategy.sol` | Ethereum | Extends `CCTPStrategy`. Accepts the extended report, rejects stale reports, compares price against an optional hub oracle, sends withdrawal requests to Base, default 3% loss limit, hub-side exposure ceiling (`maxRemoteExposure`). |
+| `src/remote/BaseOracleRemoteStrategy.sol` | Base | Base for remote sleeves that hold a priced asset (not ERC-4626). Swaps USDC for the asset via a router, values it with the oracle, sends the extended report, receives withdrawal requests from the hub. |
+| `src/remote/TesouroRemoteStrategy.sol` | Base | TESOURO with a USD ceiling (`maxUsdExposure`, default 75,000 USDC) and a BRL/USD FX stop. |
+| `src/remote/TesouroRemoteStrategyFactory.sol` | Base | CREATE3 deploy, same pattern as `RemoteStrategyFactory`, but governance-gated. |
+| `src/local/OraclePricedHoldStrategy.sol` | Ethereum | Buys and holds a token (SPYon, QQQon, cbBTC) with USDC and values it from the feed, with a stale-price check. |
+| `src/local/PendlePTHoldStrategy.sol` | Ethereum | Buys a PT with USDC and holds it to maturity, using Yearn periphery's `PendleSwapper` and Pendle's PY oracle. No loop and no borrow. |
 
-O núcleo líquido não tem código novo. É uma strategy Yearn que já existe, adicionada ao vault (`LIQUID_CORE_STRATEGY` no `DeployHub`).
+The liquid core has no new code. It is an existing Yearn strategy added to the vault (`LIQUID_CORE_STRATEGY` in `DeployHub`).
 
-Nada aqui depende de "o hub é a Ethereum, domain 0" além do que o repo já assumia. O hub é a Ethereum, então isso continua valendo.
+Nothing here depends on "the hub is Ethereum, domain 0" beyond what the repo already assumed. The hub is Ethereum, so that still holds.
 
-## Fluxos
+## Flows
 
-### Depósito e bridge
+### Deposit and bridge
 
 ```mermaid
 sequenceDiagram
@@ -51,28 +51,28 @@ sequenceDiagram
     participant R as TesouroRemoteStrategy (Base)
     V->>H: deposit(USDC)
     H->>C: depositForBurn(USDC, Base, R)
-    Note over H: remoteAssets += valor<br/>(conta na hora)
-    C-->>R: mint USDC (depois da attestation, ~15-19 min)
-    R->>R: keeper report(): compra TESOURO até o teto
-    R->>C: depositForBurn(excesso, Ethereum, H)
-    R->>C: sendMessage(report estendido)
+    Note over H: remoteAssets += amount<br/>(counts immediately)
+    C-->>R: mint USDC (after attestation, ~15-19 min)
+    R->>R: keeper report(): buy TESOURO up to the ceiling
+    R->>C: depositForBurn(excess, Ethereum, H)
+    R->>C: sendMessage(extended report)
     C-->>H: handleReceiveFinalizedMessage(report)
-    C-->>H: mint USDC do excesso
+    C-->>H: mint USDC from excess
 ```
 
-### Report estendido (Base → Ethereum)
+### Extended report (Base → Ethereum)
 
-O payload é `abi.encode(totalAssets, timestamp, price, oracleUpdatedAt)`, com 128 bytes. O hub:
+The payload is `abi.encode(totalAssets, timestamp, price, oracleUpdatedAt)`, 128 bytes. The hub:
 
-1. confere transmitter, domain, remetente e finalidade (o mesmo que o `CCTPStrategy` original);
-2. recusa payload que não tenha 128 bytes (o formato antigo, de 64 bytes, é recusado de propósito);
-3. recusa `price == 0`, `oracleUpdatedAt > timestamp`, `timestamp` mais velho que `maxReportAge` (padrão 1 dia) e `oracleUpdatedAt` mais velho que `maxOracleAge` (padrão 26 h, porque o feed RedStone tem heartbeat de 24 h);
-4. se `hubPriceOracle` estiver configurado, recusa quando a diferença passa de `maxPriceDeviationBps` (padrão 2%);
-5. aplica a mesma marca d'água de timestamp do repo original.
+1. checks transmitter, domain, sender, and finality (same as the original `CCTPStrategy`);
+2. rejects payloads that are not 128 bytes (the old 64-byte format is rejected on purpose);
+3. rejects `price == 0`, `oracleUpdatedAt > timestamp`, `timestamp` older than `maxReportAge` (default 1 day), and `oracleUpdatedAt` older than `maxOracleAge` (default 26 h, because the RedStone feed has a 24 h heartbeat);
+4. if `hubPriceOracle` is set, rejects when the difference exceeds `maxPriceDeviationBps` (default 2%);
+5. applies the same timestamp watermark as the original repo.
 
-Quando recusa, a transação reverte. O nonce do CCTP não é consumido, e um report mais novo substitui o antigo.
+On rejection the transaction reverts. The CCTP nonce is not consumed, and a newer report replaces the old one.
 
-### Pedido de saque (Ethereum → Base)
+### Withdrawal request (Ethereum → Base)
 
 ```mermaid
 sequenceDiagram
@@ -81,122 +81,122 @@ sequenceDiagram
     participant C as Circle CCTP
     participant R as TesouroRemoteStrategy (Base)
     participant RK as Keeper (Base)
-    K->>H: requestRemoteWithdrawal(valor)
-    H->>C: sendMessage(MSG_WITHDRAW_REQUEST, valor, ts)
+    K->>H: requestRemoteWithdrawal(amount)
+    H->>C: sendMessage(MSG_WITHDRAW_REQUEST, amount, ts)
     C-->>R: handleReceiveFinalizedMessage
-    Note over R: pendingWithdrawal += valor
+    Note over R: pendingWithdrawal += amount
     RK->>R: processPendingWithdrawal()
-    R->>R: vende TESOURO (slippage limitado pelo oracle)
+    R->>R: sell TESOURO (slippage capped by oracle)
     R->>C: depositForBurn(USDC, Ethereum, H) + report
     C-->>H: report + mint USDC
     K->>H: report() (Yearn)
 ```
 
-Enquanto há pedido pendente, `report()` na Base não compra TESOURO com o USDC reservado. A governance pode zerar o pedido com `clearPendingWithdrawal()`.
+While a request is pending, `report()` on Base does not buy TESOURO with the reserved USDC. Governance can clear the request with `clearPendingWithdrawal()`.
 
-## Teto em dólar
+## USD ceiling
 
-- `maxUsdExposure` fica em unidades de USDC (6 casas). O padrão é `75_000e6` e a governance pode mudar.
-- A compra é limitada a `maxUsdExposure - valorAtual`. O valor comprado sai igual ou menor que o USDC gasto, por causa do slippage, então a compra nunca passa do teto.
-- O USDC parado que não cabe no teto volta pro hub no `report()` e no `tend()`. Na mesma transação vai um report novo, para o hub não contar duas vezes.
-- Se o preço sobe (ou o teto é reduzido) e a posição passa de `teto × (1 + ceilingBufferBps)` (buffer padrão de 2%), `tendTrigger()` fica `true` e `tend()` vende o excedente e manda de volta.
-- No hub, `setMaxRemoteExposure(teto)` limita `availableDepositLimit`, e o `DeployHub` também coloca o `max_debt` do vault nesse valor. Assim nem chega a ir USDC a mais pra Base.
-- Sem router configurado, a sleeve segura USDC até o teto e devolve o resto.
+- `maxUsdExposure` is in USDC units (6 decimals). The default is `75_000e6` and governance can change it.
+- Buys are capped at `maxUsdExposure - currentValue`. The amount bought is at most the USDC spent (because of slippage), so a buy never exceeds the ceiling.
+- Idle USDC that does not fit under the ceiling is returned to the hub in `report()` and `tend()`. The same transaction sends a fresh report so the hub does not double-count.
+- If price rises (or the ceiling is lowered) and the position exceeds `ceiling × (1 + ceilingBufferBps)` (default buffer 2%), `tendTrigger()` becomes `true` and `tend()` sells the excess and sends it back.
+- On the hub, `setMaxRemoteExposure(ceiling)` limits `availableDepositLimit`, and `DeployHub` also sets the vault's `max_debt` to that value. So excess USDC never even goes to Base.
+- With no router configured, the sleeve holds USDC up to the ceiling and returns the rest.
 
-## Stop de câmbio
+## FX stop
 
-- `FX_ORACLE` é o Chainlink BRL/USD na Base. Com endereço zero, o stop fica desligado.
-- `fxReferencePrice` é gravado no deploy. A governance pode resetar com `resetFxReference()`.
-- `fxStopTriggered()` fica `true` quando o BRL/USD cai **mais** que `fxStopBps` (padrão 10%) em relação à referência. Se o feed estiver velho (mais que `fxMaxStaleness`, padrão 2 h, já que o heartbeat é 1 h), retorna `false`.
-- Com o stop acionado, **qualquer pessoa** pode chamar `fxUnwind()`. A função vende TESOURO em lotes de até `fxUnwindChunk` (o pool é raso), manda o USDC pro hub, envia o report e marca `fxStopped = true`. Depois disso a função continua liberada até terminar a venda, mesmo que o câmbio se recupere.
-- Com `fxStopped`, a sleeve não compra mais nada e devolve todo USDC que chegar. Para voltar ao normal, a governance chama `resetFxStop()`, que também ancora a referência no preço atual. A governance também pode acionar o stop na mão com `setFxStopped(true)`.
+- `FX_ORACLE` is Chainlink BRL/USD on Base. With the zero address, the stop is disabled.
+- `fxReferencePrice` is set at deploy. Governance can reset it with `resetFxReference()`.
+- `fxStopTriggered()` is `true` when BRL/USD falls **more** than `fxStopBps` (default 10%) relative to the reference. If the feed is stale (older than `fxMaxStaleness`, default 2 h, since the heartbeat is 1 h), it returns `false`.
+- Once the stop is triggered, **anyone** can call `fxUnwind()`. It sells TESOURO in chunks of up to `fxUnwindChunk` (the pool is thin), sends USDC to the hub, pushes the report, and sets `fxStopped = true`. After that the function stays callable until the sell is finished, even if FX recovers.
+- With `fxStopped`, the sleeve buys nothing further and returns all incoming USDC. To return to normal, governance calls `resetFxStop()`, which also anchors the reference to the current price. Governance can also arm the stop manually with `setFxStopped(true)`.
 
-## Papéis, keepers e relayer
+## Roles, keepers, and relayer
 
-| Papel | Onde | Faz |
+| Role | Where | Does |
 |---|---|---|
-| Management (TokenizedStrategy) | Ethereum | Parâmetros do hub (`setReportParams`, `setHubPriceOracle`, `setMaxRemoteExposure`, `setLossLimitRatio`) e das strategies locais (router, slippage, staleness). |
-| Keeper (TokenizedStrategy) | Ethereum | `report()`/`tend()` das strategies, `requestRemoteWithdrawal`. |
-| Governance (remota) | Base | Teto, router, slippage, staleness, parâmetros de câmbio, `resetFxStop`, `rescue`. |
-| Keeper (remoto) | Base | `report()`, `tend()`, `processWithdrawal`/`processPendingWithdrawal`, `pushFunds`/`pullFunds`. |
-| Qualquer pessoa | Base | `fxUnwind()`, só quando o stop está acionado ou já armado. |
-| **Relayer** | as duas | **Não existe no repo.** Alguém precisa buscar a attestation na API da Circle (Iris) e chamar `MessageTransmitterV2.receiveMessage` na rede de destino, tanto para o mint de USDC quanto para as mensagens (report e pedido de saque). Sem isso nada chega. Pode ser um bot próprio ou um serviço de relay de CCTP. |
+| Management (TokenizedStrategy) | Ethereum | Hub params (`setReportParams`, `setHubPriceOracle`, `setMaxRemoteExposure`, `setLossLimitRatio`) and local strategy params (router, slippage, staleness). |
+| Keeper (TokenizedStrategy) | Ethereum | Strategy `report()`/`tend()`, `requestRemoteWithdrawal`. |
+| Governance (remote) | Base | Ceiling, router, slippage, staleness, FX params, `resetFxStop`, `rescue`. |
+| Keeper (remote) | Base | `report()`, `tend()`, `processWithdrawal`/`processPendingWithdrawal`, `pushFunds`/`pullFunds`. |
+| Anyone | Base | `fxUnwind()`, only when the stop is triggered or already armed. |
+| **Relayer** | both | **Not in the repo.** Someone must fetch the attestation from Circle's API (Iris) and call `MessageTransmitterV2.receiveMessage` on the destination chain, for both USDC mints and messages (report and withdrawal request). Without that, nothing arrives. It can be a custom bot or a CCTP relay service. |
 
-## Pesos sugeridos
+## Suggested weights
 
-| Sleeve | Alvo | Observação |
+| Sleeve | Target | Note |
 |---|---|---|
-| Núcleo líquido (sUSDS / Morpho OG) | 35% | Paga saque na hora, já que o CCTP leva 15–19 min por perna. |
+| Liquid core (sUSDS / Morpho OG) | 35% | Pays withdrawals immediately, since CCTP takes 15–19 min per leg. |
 | SPYon | 15% | |
 | QQQon | 10% | |
-| PT Pendle | 20% | Não pode passar do que o mercado aguenta. Use `PT_MAX_DEBT`. |
-| TESOURO (Base) | 15% | Limitado pelo teto em dólar. Com teto de $75k, passa a ser menos de 15% quando o vault cresce. |
-| cbBTC (opcional) | 5% | `CBBTC` + `CBBTC_USD_FEED`. |
+| Pendle PT | 20% | Must not exceed what the market can take. Use `PT_MAX_DEBT`. |
+| TESOURO (Base) | 15% | Capped by the USD ceiling. At a $75k ceiling it falls below 15% as the vault grows. |
+| cbBTC (optional) | 5% | `CBBTC` + `CBBTC_USD_FEED`. |
 
-Esses alvos estão em `script/DeployHub.s.sol` e só são aplicados se `DEBT_ALLOCATOR` for passado. Para isso, o broadcaster precisa ser manager do allocator, e o vault já precisa estar configurado nele.
+These targets live in `script/DeployHub.s.sol` and are only applied if `DEBT_ALLOCATOR` is passed. For that, the broadcaster must be a manager of the allocator, and the vault must already be configured on it.
 
-## Riscos
+## Risks
 
-- **Câmbio BRL.** O TESOURO rende em reais. Uma queda de 10% do real come mais ou menos um ano de cupom. O stop limita a perda, mas não protege contra um gap entre dois updates.
-- **Liquidez do TESOURO na Base.** O pool na Curve tem uns $73k, e o supply na Base gira em torno de $24k (cerca de 96k tokens, a ~$0,25). Por isso existe o teto, os lotes no `fxUnwind` e o slippage máximo de 10%. Uma saída grande pode levar vários blocos ou dias.
-- **Rota de swap não verificada.** A ideia é Curve TESOURO/BRZ e depois BRZ→USDC, mas nenhum pool foi confirmado. O router é um adapter `IOracleSwapRouter` que **ainda precisa ser escrito e auditado**.
-- **Oracle de fonte única.** O preço do TESOURO vem só da RedStone (relayer push, desvio de 0,1%, heartbeat de 24 h). O hub aceita um segundo oracle (`setHubPriceOracle`), mas hoje não existe feed TESOURO/USD na Ethereum. Dá pra montar um adapter BRL/USD × TESOURO/BRL.
-- **Horário de mercado das ações.** Os feeds SPYon/QQQon são 24/5 com heartbeat de 24 h. No fim de semana o feed fica velho: depósito fecha, saque fica limitado ao USDC parado e `report()` reverte. Isso evita entrar e sair a preço congelado, mas o gap de segunda-feira aparece de uma vez no report.
-- **Restrições dos tokens.** Os tokens Ondo Global Markets têm regras de KYC/jurisdição para mint/redeem e podem ter bloqueio de transferência. O TESOURO (Etherfuse) também tem regras de emissor. Confirme se o vault e as strategies podem segurar esses tokens.
-- **USDC = USD.** Toda a valorização assume 1 USDC = 1 USD.
-- **PT.** O `PendlePTHoldStrategy` assume que o ativo contábil do SY é USD 1:1 com USDC e só aceita mercado cujo SY recebe e devolve USDC direto. O oracle da Pendle precisa estar com cardinalidade suficiente para o TWAP (`getOracleState`).
-- **Contabilidade cross-chain.** É a mesma janela do repo original: entre o mint de USDC e a chegada do report, o hub pode contar o mesmo valor dois lados ou nenhum. O health check (lucro 10%, perda 3%) segura distorções grandes.
-- **Código não auditado.** Os testes são unitários com mocks, mais checagens em fork só dos endereços. Não houve teste de integração com CCTP real.
+- **BRL FX.** TESOURO yields in reais. A 10% drop in the real roughly eats a year of coupon. The stop limits the loss, but does not protect against a gap between two updates.
+- **TESOURO liquidity on Base.** The Curve pool is about $73k, and supply on Base is around $24k (about 96k tokens at ~$0.25). That is why the ceiling, the `fxUnwind` chunks, and the 10% max slippage exist. A large exit can take several blocks or days.
+- **Swap route unverified.** The intended path is Curve TESOURO/BRZ then BRZ→USDC, but no pool has been confirmed. The router is an `IOracleSwapRouter` adapter that **still needs to be written and audited**.
+- **Single-source oracle.** TESOURO's price comes only from RedStone (push relayer, 0.1% deviation, 24 h heartbeat). The hub accepts a second oracle (`setHubPriceOracle`), but there is no TESOURO/USD feed on Ethereum today. A BRL/USD × TESOURO/BRL adapter can be built.
+- **Equity market hours.** The SPYon/QQQon feeds are 24/5 with a 24 h heartbeat. Over the weekend the feed goes stale: deposits close, withdrawals are limited to idle USDC, and `report()` reverts. That prevents entering and exiting at a frozen price, but Monday's gap shows up all at once in the report.
+- **Token restrictions.** Ondo Global Markets tokens have KYC/jurisdiction rules for mint/redeem and may have transfer locks. TESOURO (Etherfuse) also has issuer rules. Confirm that the vault and strategies are allowed to hold these tokens.
+- **USDC = USD.** All valuation assumes 1 USDC = 1 USD.
+- **PT.** `PendlePTHoldStrategy` assumes the SY's accounting asset is USD 1:1 with USDC and only accepts markets whose SY takes and returns USDC directly. Pendle's oracle needs enough cardinality for the TWAP (`getOracleState`).
+- **Cross-chain accounting.** Same window as the original repo: between the USDC mint and the report arriving, the hub can count the same amount on both sides or on neither. The health check (10% profit, 3% loss) catches large distortions.
+- **Unaudited code.** Tests are unit tests with mocks, plus fork checks of addresses only. There has been no integration test against live CCTP.
 
-## Endereços
+## Addresses
 
-### Verificados (on-chain via `cast` em 08/10/2026, mais a fonte citada)
+### Verified (on-chain via `cast` on 08/10/2026, plus the cited source)
 
-| Item | Endereço | Fonte |
+| Item | Address | Source |
 |---|---|---|
-| TESOURO (Base), 6 casas | `0x7ceE47e7B7CD04CF984e8Dd86C42595B5771A9B2` | `name()` = "Etherfuse TESOURO", `decimals()` = 6 |
-| RedStone TESOURO/USD (Base), 8 casas | `0xb67047eDF6204F4C81333248dA71F8387050790C` | `description()` = "RedStone Price Feed for TESOURO". redstone-oracles-monorepo `relayer-manifests-multi-feed/baseMultiFeed.json` (heartbeat de 24 h, desvio de 0,1%). Obs.: o mesmo endereço é o feed de BTC na Katana. |
-| Chainlink BRL/USD (Base), 8 casas | `0x0b0E64c05083FdF9ED7C5D3d8262c4216eFc9394` | data.chain.link/feeds/base/base/brl-usd, `description()` = "BRL / USD", heartbeat de 1 h |
-| SPYon (Ethereum), 18 casas | `0xFeDC5f4a6c38211c1338aa411018DFAf26612c08` | `name()` = "SPDR S&P 500 ETF (Ondo Tokenized)" |
-| QQQon (Ethereum), 18 casas | `0x0e397938C1Aa0680954093495B70A9F5e2249aBa` | `name()` = "Invesco QQQ (Ondo Tokenized)" |
-| Chainlink SPYon/USD (Ondo API) | `0x6EcC1b902dB35eAFE95332443802774Fd1D72576` | diretório de feeds da Chainlink (`spyon-usd-shared-svr`), 24/5, heartbeat de 24 h |
-| Chainlink QQQon/USD (Ondo API) | `0xE5DF423251c67D85B2D70787Af76069d96BC4D4C` | diretório de feeds da Chainlink (`qqqon-usd-shared-svr`), 24/5, heartbeat de 24 h |
+| TESOURO (Base), 6 decimals | `0x7ceE47e7B7CD04CF984e8Dd86C42595B5771A9B2` | `name()` = "Etherfuse TESOURO", `decimals()` = 6 |
+| RedStone TESOURO/USD (Base), 8 decimals | `0xb67047eDF6204F4C81333248dA71F8387050790C` | `description()` = "RedStone Price Feed for TESOURO". redstone-oracles-monorepo `relayer-manifests-multi-feed/baseMultiFeed.json` (24 h heartbeat, 0.1% deviation). Note: the same address is the BTC feed on Katana. |
+| Chainlink BRL/USD (Base), 8 decimals | `0x0b0E64c05083FdF9ED7C5D3d8262c4216eFc9394` | data.chain.link/feeds/base/base/brl-usd, `description()` = "BRL / USD", 1 h heartbeat |
+| SPYon (Ethereum), 18 decimals | `0xFeDC5f4a6c38211c1338aa411018DFAf26612c08` | `name()` = "SPDR S&P 500 ETF (Ondo Tokenized)" |
+| QQQon (Ethereum), 18 decimals | `0x0e397938C1Aa0680954093495B70A9F5e2249aBa` | `name()` = "Invesco QQQ (Ondo Tokenized)" |
+| Chainlink SPYon/USD (Ondo API) | `0x6EcC1b902dB35eAFE95332443802774Fd1D72576` | Chainlink feed directory (`spyon-usd-shared-svr`), 24/5, 24 h heartbeat |
+| Chainlink QQQon/USD (Ondo API) | `0xE5DF423251c67D85B2D70787Af76069d96BC4D4C` | Chainlink feed directory (`qqqon-usd-shared-svr`), 24/5, 24 h heartbeat |
 | Pendle Router V4 | `0x888888888889758F76e7103c6CbF23ABbF58F946` | pendle-core-v2-public `deployments/1-core.json` |
 | Pendle pyYtLpOracle | `0x5542be50420E88dd7D5B4a3D488FA6ED82F6DAc2` | pendle-core-v2-public `deployments/1-core.json` |
 | Yearn VaultFactory 3.0.4 | `0x770D0d1Fb036483Ed4AbB6d53c1C88fb277D812F` | `TokenizedStrategy.FACTORY()`, `apiVersion()` = "3.0.4" |
-| CCTP, USDC, domains | `src/libraries/CCTPHelpers.sol` | já estavam no repo |
+| CCTP, USDC, domains | `src/libraries/CCTPHelpers.sol` | already in the repo |
 
-Todos estão em `src/libraries/TesouroAddresses.sol`. Os contratos recebem tudo por argumento de construtor, e os scripts usam esses valores como padrão, que pode ser trocado por env.
+All of these live in `src/libraries/TesouroAddresses.sol`. Contracts take everything as constructor args, and the scripts use these values as defaults that can be overridden via env.
 
 ### TODO / placeholders
 
-| O que | Onde | Situação |
+| What | Where | Status |
 |---|---|---|
-| Router TESOURO↔USDC na Base | `TESOURO_SWAP_ROUTER` / `setRouter` | **Não existe.** Precisa de um adapter `IOracleSwapRouter` para Curve TESOURO/BRZ e BRZ→USDC. Com zero, a sleeve segura USDC. |
-| Router das ações na Ethereum | `EQUITY_ROUTER` / `setRouter` | **Não existe.** Adapter Uniswap ou mint/redeem da Ondo. Com zero, segura USDC. |
-| Mercado PT | `PENDLE_MARKET` | Escolher um mercado cujo SY aceite USDC direto e que seja denominado em USD. Sem isso, o PT fica de fora. |
-| Strategy do núcleo líquido | `LIQUID_CORE_STRATEGY` | Endereço de uma strategy Yearn existente (sUSDS / Morpho OG). |
-| Oracle TESOURO/USD no hub | `setHubPriceOracle` | Opcional. Não existe na Ethereum, então precisa de um adapter. |
-| cbBTC + feed | `CBBTC`, `CBBTC_USD_FEED` | Opcional. |
-| Debt allocator | `DEBT_ALLOCATOR` | Opcional. Sem ele, os pesos são aplicados na mão. |
-| Papéis | `SENDER`, `MANAGEMENT`, `KEEPER`, `EMERGENCY_ADMIN`, `PERFORMANCE_FEE_RECIPIENT`, `ROLE_MANAGER`, `REMOTE_GOVERNANCE`, `REMOTE_KEEPER` | Preencher. |
-| Relayer CCTP | — | Precisa ser montado (ver acima). |
+| TESOURO↔USDC router on Base | `TESOURO_SWAP_ROUTER` / `setRouter` | **Does not exist.** Needs an `IOracleSwapRouter` adapter for Curve TESOURO/BRZ and BRZ→USDC. With zero, the sleeve holds USDC. |
+| Equity router on Ethereum | `EQUITY_ROUTER` / `setRouter` | **Does not exist.** Uniswap adapter or Ondo mint/redeem. With zero, holds USDC. |
+| PT market | `PENDLE_MARKET` | Pick a market whose SY accepts USDC directly and that is USD-denominated. Without it, the PT sleeve is skipped. |
+| Liquid core strategy | `LIQUID_CORE_STRATEGY` | Address of an existing Yearn strategy (sUSDS / Morpho OG). |
+| Hub TESOURO/USD oracle | `setHubPriceOracle` | Optional. Does not exist on Ethereum, so an adapter is needed. |
+| cbBTC + feed | `CBBTC`, `CBBTC_USD_FEED` | Optional. |
+| Debt allocator | `DEBT_ALLOCATOR` | Optional. Without it, weights are set by hand. |
+| Roles | `SENDER`, `MANAGEMENT`, `KEEPER`, `EMERGENCY_ADMIN`, `PERFORMANCE_FEE_RECIPIENT`, `ROLE_MANAGER`, `REMOTE_GOVERNANCE`, `REMOTE_KEEPER` | Fill in. |
+| CCTP relayer | — | Needs to be built (see above). |
 
-## Deploy (ainda não executado)
+## Deploy (not run yet)
 
 1. **Base:** `forge script script/DeployRemoteBase.s.sol --sig "deployFactory()" --rpc-url $BASE_RPC_URL --broadcast` (env `REMOTE_GOVERNANCE`).
-2. **Ethereum:** `forge script script/DeployHub.s.sol --rpc-url $ETH_RPC_URL --broadcast` com `TESOURO_REMOTE_FACTORY` igual ao endereço do passo 1. O script prevê o endereço do hub pelo nonce do `SENDER` e o da strategy remota pelo salt CREATE3 `(TESOURO, 0, hub)`.
-3. **Base:** `forge script script/DeployRemoteBase.s.sol --rpc-url $BASE_RPC_URL --broadcast` com `HUB_STRATEGY`, tendo como broadcaster a governance da factory. O script confere se o endereço bate com o previsto.
-4. Aceitar o management (`acceptManagement`) e o role manager do vault, configurar o relayer e só então subir o `deposit_limit` do vault (o script deixa em 0 por padrão).
+2. **Ethereum:** `forge script script/DeployHub.s.sol --rpc-url $ETH_RPC_URL --broadcast` with `TESOURO_REMOTE_FACTORY` equal to the address from step 1. The script predicts the hub address from the `SENDER` nonce and the remote strategy address from the CREATE3 salt `(TESOURO, 0, hub)`.
+3. **Base:** `forge script script/DeployRemoteBase.s.sol --rpc-url $BASE_RPC_URL --broadcast` with `HUB_STRATEGY`, with the factory governance as broadcaster. The script checks that the address matches the prediction.
+4. Accept management (`acceptManagement`) and the vault role manager, configure the relayer, and only then raise the vault `deposit_limit` (the script leaves it at 0 by default).
 
-## Testes
+## Tests
 
 ```sh
-# só unitários (mocks, sem RPC)
+# unit only (mocks, no RPC)
 forge test --match-path 'src/test/unit/*'
 
-# checagens em fork dos endereços (pulam sem RPC)
+# fork address checks (skip without RPC)
 ETH_RPC_URL=... BASE_RPC_URL=... forge test --match-path 'src/test/fork/*'
 ```
 
-O que os testes unitários cobrem: o teto (depósito acima volta pro hub, segundo depósito volta inteiro, trim no tend, sem router), o report estendido aceito e decodificado, payload antigo recusado, report velho e preço velho recusados, desvio de preço, remetente/domain/finalidade inválidos dos dois lados, ida e volta do pedido de saque, `fxUnwind` só depois do limite (inclusive com feed velho e em lotes), loss limit configurável, e valorização das strategies locais com revert por preço velho e PT até o vencimento.
+What the unit tests cover: the ceiling (over-ceiling deposit returns to hub, second deposit returns in full, tend trim, no router), extended report accepted and decoded, old payload rejected, stale report and stale price rejected, price deviation, invalid sender/domain/finality on both sides, withdrawal request round-trip, `fxUnwind` only after the threshold (including with a stale feed and in chunks), configurable loss limit, and local strategy valuation with revert on stale price and PT held to maturity.
