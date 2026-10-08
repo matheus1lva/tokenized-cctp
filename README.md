@@ -1,5 +1,7 @@
 # Tokenized Strategy Mix for Yearn V3 strategies
 
+> **USD hub + TESOURO (Base) com teto em dólar:** veja [`docs/USD_HUB_TESOURO.md`](docs/USD_HUB_TESOURO.md) (pt-BR) para a arquitetura, fluxos, riscos e endereços desta branch.
+
 This repo will allow you to write, test and deploy V3 "Tokenized Strategies" using [Foundry](https://book.getfoundry.sh/).
 
 You will only need to override the three functions in Strategy.sol of `_deployFunds`, `_freeFunds` and `_harvestAndReport`. With the option to also override `_tend`, `_tendTrigger`, `availableDepositLimit`, `availableWithdrawLimit` and `_emergencyWithdraw` if desired.
