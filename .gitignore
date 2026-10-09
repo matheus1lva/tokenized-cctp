@@ -9,7 +9,8 @@ out/
 /broadcast/
 
 # Docs
-docs/
+docs/*
+!docs/USD_HUB_TESOURO.md
 
 # Dotenv file
 .env
